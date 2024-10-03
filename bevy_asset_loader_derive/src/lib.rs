@@ -20,7 +20,7 @@ use quote::{quote, quote_spanned, ToTokens, TokenStreamExt};
 use syn::punctuated::Punctuated;
 #[cfg(any(feature = "2d", feature = "3d"))]
 use syn::ExprPath;
-use syn::{Data, Expr, ExprLit, Field, Fields, Index, Lit, LitStr, Meta, Token};
+use syn::{Data, Expr, ExprArray, ExprLit, Field, Fields, Index, Lit, LitStr, Meta, Token};
 
 /// Derive macro for [`AssetCollection`]
 ///
@@ -170,7 +170,7 @@ fn impl_asset_collection(
         }
     } else {
         return Err(vec![syn::Error::new_spanned(
-            &ast.into_token_stream(),
+            ast.into_token_stream(),
             "AssetCollection can only be derived for a struct",
         )]);
     }
@@ -507,17 +507,34 @@ fn parse_field(field: &Field) -> Result<AssetField, Vec<ParseFieldError>> {
                     meta_list.into_token_stream(),
                 )),
                 Meta::NameValue(named_value) if named_value.path.is_ident(PATH_ATTRIBUTE) => {
-                    if let Expr::Lit(ExprLit {
-                        lit: Lit::Str(path),
-                        ..
-                    }) = &named_value.value
-                    {
-                        builder.asset_path = Some(path.value());
-                    } else {
-                        errors.push(ParseFieldError::WrongAttributeType(
-                            named_value.into_token_stream(),
-                            "str",
-                        ));
+                    match &named_value.value {
+                        Expr::Lit(ExprLit {
+                            lit: Lit::Str(path),
+                            ..
+                        }) => {
+                            builder.asset_path = Some(path.value());
+                        }
+                        Expr::Array(ExprArray { elems, .. }) => {
+                            builder.asset_path =
+                                Some(elems.iter().fold(String::new(), |mut acc, elem| {
+                                    if let Expr::Lit(ExprLit {
+                                        lit: Lit::Str(path),
+                                        ..
+                                    }) = elem
+                                    {
+                                        acc += &path.value();
+                                    } else {
+                                        acc += &elem.into_token_stream().to_string();
+                                    }
+                                    acc
+                                }));
+                        }
+                        _ => {
+                            errors.push(ParseFieldError::WrongAttributeType(
+                                named_value.into_token_stream(),
+                                "str or array of str",
+                            ));
+                        }
                     }
                 }
                 Meta::NameValue(named_value) if named_value.path.is_ident(KEY_ATTRIBUTE) => {
